@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ledgerly — Personal Finance</title>
+<link rel="stylesheet" href="ledgerly_styles.css">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">↗</div><span class="brand-name">Ledgerly</span></div>
+  <div><div class="side-label">WORKSPACE</div><nav class="nav" id="nav">
+    <button class="active" data-page="dashboard"><span class="ico">▦</span><span class="nav-label">Dashboard</span></button>
+    <button data-page="stats"><span class="ico">▥</span><span class="nav-label">Statistics</span></button>
+    <button data-page="accounts"><span class="ico">▣</span><span class="nav-label">Accounts</span></button>
+    <button data-page="settings"><span class="ico">⚙</span><span class="nav-label">Settings</span></button>
+  </nav></div>
+  <div class="side-bottom"><strong>Small steps add up.</strong><p>Track today. Understand tomorrow. Build better money habits.</p></div>
+</aside>
+<main class="main">
+<header class="topbar"><div><div class="eyebrow" id="eyebrow">YOUR MONEY, CLEARLY</div><h1 class="page-title" id="pageTitle">Dashboard</h1></div><div class="top-actions"><button class="date-chip" id="todayBtn">Today ▾</button><button class="primary-btn" id="quickAdd">＋ Add transaction</button><div class="avatar">J</div></div></header>
+<section class="page active" id="page-dashboard">
+  <div class="subnav" id="dashTabs">
+    <button class="active" data-tab="daily">Daily</button><button data-tab="calendar">Calendar</button><button data-tab="monthly">Monthly</button><button data-tab="summary">Summary</button><button data-tab="description">Description</button>
+  </div>
+  <div id="dashboardContent"></div>
+</section>
+<section class="page" id="page-stats">
+  <div class="section-head"><div><h2>Financial overview</h2><p>Understand how your money moves over time.</p></div><select id="statsPeriod" class="select-control"><option value="6">Last 6 months</option><option value="12">Last 12 months</option><option value="3">Last 3 months</option></select></div>
+  <div class="grid metrics" id="statsMetrics"></div>
+  <div class="grid two-col"><div class="card"><div class="section-head"><div><h2>Income vs. expenses</h2><p>Monthly comparison</p></div></div><div class="legend"><span><i class="dot" style="background:#0f9f75"></i>Income</span><span><i class="dot" style="background:#e05260"></i>Expenses</span></div><div class="chart-wrap"><canvas id="incomeChart"></canvas></div></div><div class="card"><div class="section-head"><div><h2>Spending by category</h2><p>Where expenses go</p></div></div><div class="chart-wrap"><canvas id="categoryChart"></canvas></div><div id="categoryLegend" class="summary-list"></div></div></div>
+</section>
+<section class="page" id="page-accounts">
+  <div class="section-head"><div><h2>Your accounts</h2><p>Track money across cash, banks, e-wallets, and liabilities.</p></div><button class="primary-btn" id="addAccount">＋ Add account</button></div>
+  <div class="grid metrics" id="accountMetrics"></div>
+  <div class="grid account-grid" id="accountList"></div>
+  <div class="card" style="margin-top:18px"><div class="section-head"><div><h2>Account activity</h2><p>Recent transactions across all accounts</p></div></div><div class="table-wrap" id="accountActivity"></div></div>
+</section>
+<section class="page" id="page-settings">
+  <div class="grid two-col">
+    <div class="card"><div class="section-head"><div><h2>Preferences</h2><p>Make Ledgerly work your way.</p></div></div><div class="settings-list">
+      <div class="setting-row"><div><strong>Theme</strong><small>Choose the look of your workspace</small></div><select id="themeSetting"><option value="light">Bright</option><option value="dark">Dark</option><option value="standard">Standard</option></select></div>
+      <div class="setting-row"><div><strong>Main currency</strong><small>Currency used for summaries</small></div><select id="currencySetting"><option value="PHP">PHP — ₱</option><option value="USD">USD — $</option><option value="EUR">EUR — €</option><option value="GBP">GBP — £</option><option value="JPY">JPY — ¥</option></select></div>
+      <div class="setting-row"><div><strong>Subcurrency</strong><small>Fractional unit</small></div><span id="subcurrency">Centavos</span></div>
+      <div class="setting-row"><div><strong>Default sort</strong><small>Order transactions by date</small></div><select id="sortSetting"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="largest">Largest amount</option></select></div>
+      <div class="setting-row"><div><strong>Include transfers in totals</strong><small>Transfers are normally excluded from income/expense</small></div><input type="checkbox" id="transferSetting" checked></div>
+    </div></div>
+    <div class="card"><div class="section-head"><div><h2>Tools & data</h2><p>Utilities and backup options.</p></div></div><div class="settings-list">
+      <div class="setting-row"><div><strong>Quick calculator</strong><small>Calculate a simple amount</small></div><button class="ghost-btn" id="openCalc">Open</button></div>
+      <div class="setting-row"><div><strong>Percentage calculator</strong><small>Find a percentage of an amount</small></div><button class="ghost-btn" id="openPercent">Open</button></div>
+      <div class="setting-row"><div><strong>Export transactions</strong><small>Download your records as CSV</small></div><button class="ghost-btn" id="exportCsv">Export CSV</button></div>
+      <div class="setting-row"><div><strong>Backup data</strong><small>Save accounts, settings, and transactions</small></div><button class="ghost-btn" id="backupBtn">Download JSON</button></div>
+      <div class="setting-row"><div><strong>Restore backup</strong><small>Import a previously saved JSON backup</small></div><label class="ghost-btn" for="restoreFile">Choose file</label><input id="restoreFile" type="file" accept=".json,application/json" hidden></div>
+      <div class="setting-row"><div><strong>Clear all data</strong><small>Remove all transactions and accounts</small></div><button class="ghost-btn" id="clearData">Clear</button></div>
+    </div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h2>Account configuration</h2><p style="color:var(--muted);font-size:13px">Create account groups such as Cash, Bank, E-wallet, Savings, Credit Card, Assets, and Liabilities from the Accounts page. This prototype stores data in this browser on this device.</p></div>
+</section>
+</main></div>
+<div class="modal-backdrop" id="transactionModal"><div class="modal"><div class="modal-head"><h2 id="transactionModalTitle">Add transaction</h2><button class="close-btn" data-close="transactionModal">×</button></div><form id="transactionForm"><input type="hidden" id="transactionId"><div class="form-grid">
+<div class="field"><label for="txType">Transaction type</label><select id="txType"><option value="expense">Expense</option><option value="income">Income</option><option value="transfer">Transfer</option></select></div>
+<div class="field"><label for="txAmount">Amount (₱)</label><input id="txAmount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div>
+<div class="field full"><label for="txDescription">Description</label><input id="txDescription" required maxlength="100" placeholder="e.g. Lunch, Salary, Electricity bill"></div>
+<div class="field"><label for="txCategory">Category</label><select id="txCategory"><option>Food & groceries</option><option>Transportation</option><option>Bills & utilities</option><option>Personal care</option><option>Shopping</option><option>Family & relationships</option><option>Church & donations</option><option>Education</option><option>Entertainment</option><option>Savings</option><option>Debt payment</option><option>Business</option><option>Salary</option><option>Other</option></select></div>
+<div class="field"><label for="txDate">Date</label><input id="txDate" type="date" required></div>
+<div class="field" id="sourceField"><label for="txAccount">Account</label><select id="txAccount"></select></div>
+<div class="field" id="destinationField" style="display:none"><label for="txDestination">Transfer to</label><select id="txDestination"></select></div>
+<div class="field"><label for="txMethod">Payment method</label><select id="txMethod"><option>Cash</option><option>GCash</option><option>Maya</option><option>Bank transfer</option><option>Credit card</option><option>Other</option></select></div>
+<div class="field full"><label for="txNotes">Notes (optional)</label><textarea id="txNotes" rows="2" placeholder="Add a note…"></textarea></div>
+</div><div class="form-actions"><button type="button" class="ghost-btn" data-close="transactionModal">Cancel</button><button type="submit" class="primary-btn">Save transaction</button></div></form></div></div>
+<div class="modal-backdrop" id="accountModal"><div class="modal"><div class="modal-head"><h2 id="accountModalTitle">Add account</h2><button class="close-btn" data-close="accountModal">×</button></div><form id="accountForm"><input type="hidden" id="accountId"><div class="form-grid">
+<div class="field full"><label for="accountName">Account name</label><input id="accountName" required placeholder="e.g. Cash on Hand"></div>
+<div class="field"><label for="accountType">Account type</label><select id="accountType"><option value="asset">Asset</option><option value="liability">Liability</option></select></div>
+<div class="field"><label for="accountGroup">Account group</label><select id="accountGroup"><option>Cash</option><option>Bank</option><option>E-wallet</option><option>Savings</option><option>Credit Card</option><option>Investment</option><option>Receivable</option><option>Payable</option><option>Other</option></select></div>
+<div class="field"><label for="accountOpening">Opening balance</label><input id="accountOpening" type="number" step=".01" required value="0"></div>
+<div class="field"><label for="accountIncluded">Include in totals</label><select id="accountIncluded"><option value="yes">Yes</option><option value="no">No</option></select></div>
+<div class="field full"><label for="accountNotes">Notes (optional)</label><input id="accountNotes" placeholder="Optional details"></div>
+</div><div class="form-actions"><button type="button" class="ghost-btn" data-close="accountModal">Cancel</button><button class="primary-btn" type="submit">Save account</button></div></form></div></div>
+<div class="modal-backdrop" id="utilityModal"><div class="modal"><div class="modal-head"><h2 id="utilityTitle">Calculator</h2><button class="close-btn" data-close="utilityModal">×</button></div><div id="utilityBody"></div></div></div>
+<div class="toast" id="toast"></div>
+<script src="ledgerly_app.js"></script>
+</body>
+</html>
