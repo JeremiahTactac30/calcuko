@@ -76,8 +76,10 @@ function defaultSettings() {
   };
 }
 function newDB() {
-  return { v: 1, settings: defaultSettings(), groups: DEFAULT_GROUPS.map(function (g) { return Object.assign({}, g); }), accounts: [], categories: { expense: DEFAULT_CATS.expense.slice(), income: DEFAULT_CATS.income.slice() }, methods: METHODS.slice(), txns: [], savedAt: null };
+  return { v: 1, settings: defaultSettings(), groups: DEFAULT_GROUPS.map(function (g) { return Object.assign({}, g); }), accounts: [], categories: { expense: DEFAULT_CATS.expense.slice(), income: DEFAULT_CATS.income.slice() }, methods: METHODS.slice(), catMeta: {}, txns: [], savedAt: null };
 }
+var DEFAULT_ICONS = { Food: '🍔', Transportation: '🚌', Electricity: '💡', Water: '🚰', Internet: '🌐', Rent: '🏠', Shopping: '🛍️', Health: '💊', Education: '🎓', Entertainment: '🎬', Bills: '🧾', 'Transfer Fee': '🏦', Other: '📦', Salary: '💼', 'Business Income': '🏪', Allowance: '🎒', Gift: '🎁', Interest: '📈', Transfer: '🔁' };
+var ICON_CHOICES = ['🍔', '🍕', '☕', '🍺', '🛒', '🚌', '🚗', '⛽', '✈️', '🏠', '💡', '🚰', '📱', '🌐', '💊', '🏥', '🎓', '📚', '🎬', '🎮', '🎵', '🎁', '👕', '🛍️', '💄', '✂️', '🐶', '🧒', '🏋️', '🌴', '💍', '🔧', '🧹', '🧾', '🏦', '💼', '🏪', '💰', '📈', '🎒', '⛪', '❤️', '📦', '🏷️', '⭐', '🔥', '🍎', '🚲'];
 var DB = newDB();
 var storageOK = true, lastSaveError = '', onSaved = null;
 
@@ -136,6 +138,20 @@ function rateOf(code) {
   var r = DB.settings.rates[code]; return r > 0 ? r : null;
 }
 function toMain(cents, code) { var r = rateOf(code); return r == null ? cents : Math.round(cents * r); }
+
+/* ---------- category icons & colours ---------- */
+function catKey(type, name) { return (type === 'income' ? 'income' : 'expense') + ':' + name; }
+function catIcon(type, name) {
+  if (type === 'transfer') return DEFAULT_ICONS.Transfer;
+  var m = DB.catMeta[catKey(type, name)];
+  if (m && m.icon) return m.icon;
+  if (type === 'income' && name === 'Other') return '💵';
+  return DEFAULT_ICONS[name] || (type === 'income' ? '💵' : '🏷️');
+}
+function catCi(type, name) {
+  var m = DB.catMeta[catKey(type, name)]; if (m && typeof m.ci === 'number' && m.ci >= 0 && m.ci < 8) return m.ci;
+  var i = DB.categories[type === 'income' ? 'income' : 'expense'].indexOf(name); return i < 0 ? 7 : i % 8;
+}
 
 /* ---------- lookups ---------- */
 function acctById(id) { for (var i = 0; i < DB.accounts.length; i++) if (DB.accounts[i].id === id) return DB.accounts[i]; return null; }
@@ -348,6 +364,7 @@ function validateDB(o) {
   var base = newDB(), db = Object.assign(base, o);
   db.settings = Object.assign(defaultSettings(), o.settings); db.settings.currency = Object.assign(defaultSettings().currency, o.settings.currency);
   db.settings.rates = o.settings.rates && typeof o.settings.rates === 'object' ? o.settings.rates : {};
+  db.catMeta = o.catMeta && typeof o.catMeta === 'object' && !Array.isArray(o.catMeta) ? o.catMeta : {};
   db.methods = Array.isArray(o.methods) && o.methods.length ? o.methods : METHODS.slice();
   db.txns.forEach(function (t) { t.desc = String(t.desc || ''); t.category = String(t.category || ''); t.notes = String(t.notes || ''); t.method = String(t.method || ''); t.toAccount = t.toAccount || ''; });
   return { ok: true, db: db };
@@ -376,11 +393,11 @@ function load() {
   }
 }
 /* ---------- aggregation ---------- */
-function catIndex(type, name) { var i = DB.categories[type === 'income' ? 'income' : 'expense'].indexOf(name); return i < 0 ? 7 : i % 8; }
+function catIndex(type, name) { return catCi(type, name); }
 function byCategory(list, type) {
   var m = {};
   list.forEach(function (t) { if (t.type !== type || !reportable(t)) return; m[t.category] = (m[t.category] || 0) + amtMain(t); });
-  return Object.keys(m).map(function (k) { return { name: k, value: m[k], ci: catIndex(type, k) }; }).sort(function (a, b) { return b.value - a.value; });
+  return Object.keys(m).map(function (k) { return { name: k, value: m[k], ci: catIndex(type, k), icon: catIcon(type, k) }; }).sort(function (a, b) { return b.value - a.value; });
 }
 function bucketKey(t, gran) { return gran === 'hour' ? t.time.slice(0, 2) : gran === 'day' ? t.date : gran === 'month' ? t.date.slice(0, 7) : t.date.slice(0, 4); }
 function bucketList(from, to, gran) {
@@ -597,7 +614,8 @@ function acctOptions(sel, o) {
   return out;
 }
 function allCats() { var s = {}, o = []; DB.categories.expense.concat(DB.categories.income).forEach(function (c) { if (!s[c]) { s[c] = 1; o.push(c); } }); DB.txns.forEach(function (t) { if (t.type !== 'transfer' && !s[t.category]) { s[t.category] = 1; o.push(t.category); } }); return o.sort(); }
-function catOptions(sel, blank) { return (blank ? opt('', blank, sel) : '') + allCats().map(function (c) { return opt(c, c, sel); }).join(''); }
+function anyIcon(c) { return DB.categories.expense.indexOf(c) >= 0 || DB.catMeta['expense:' + c] ? catIcon('expense', c) : catIcon('income', c); }
+function catOptions(sel, blank) { return (blank ? opt('', blank, sel) : '') + allCats().map(function (c) { return opt(c, anyIcon(c) + '  ' + c, sel); }).join(''); }
 function stat(label, val, c, sub) { return '<div class="stat"><div class="sl">' + esc(label) + '</div><div class="sv ' + (c || '') + '">' + val + '</div>' + (sub ? '<div class="ss">' + sub + '</div>' : '') + '</div>'; }
 function empty(title, text, btn) { return '<div class="empty"><div class="eico">' + ico('M3 7h18v12H3zM3 7l3-3h12l3 3') + '</div><h3>' + esc(title) + '</h3><p>' + text + '</p>' + (btn || '') + '</div>'; }
 function toggle(name, checked, label, hint) { return '<label class="tgl"><input type="checkbox" data-s="' + name + '"' + (checked ? ' checked' : '') + '><span class="sw"></span><span class="tl">' + esc(label) + (hint ? '<small>' + hint + '</small>' : '') + '</span></label>'; }
@@ -611,21 +629,31 @@ function txnRow(t, o) {
   if (t.parentId) badge = '<span class="bdg fee">Fee</span>';
   if (S0.cardBadge && t.type === 'expense' && isCard(A)) badge += '<span class="bdg card">Card</span>';
   var meta = [t.type === 'transfer' ? '' : esc(t.category), accTxt];
-  if (o.showDate) meta.unshift(esc(fmtDate(t.date)));
+  if (o.showDate !== false) meta.unshift('<b class="tdate">' + esc(fmtDate(t.date)) + '</b>');
   if (S0.showTime) meta.push(esc(fmtTime(t.time)));
   if (t.method && t.type !== 'transfer') meta.push(esc(t.method));
   var cur = A && A.currency !== S0.currency.code ? A.currency : null;
   var amt = (sign < 0 ? '−' : sign > 0 ? '+' : '') + fmtMoney(t.amount, A ? A.currency : null);
-  var bal = o.balance != null ? '<div class="rb">Bal ' + fmtMoney(o.balance, A ? A.currency : null) + '</div>' : '';
+  var bv = o.balance != null ? o.balance : (o.rb && o.rb[t.id] != null ? o.rb[t.id] : null), bal = bv != null ? '<div class="rb">Bal ' + fmtMoney(bv, A ? A.currency : null) + '</div>' : '';
   return '<div class="trow' + (S0.compact ? ' compact' : '') + '" data-act="editTxn" data-id="' + esc(t.id) + '" tabindex="0" role="button">' +
-    '<span class="dot ci' + (t.type === 'transfer' ? 't' : catIndex(t.type, t.category)) + '"></span>' +
+    '<span class="cico" style="--cc:var(--c' + (t.type === 'transfer' ? 0 : catIndex(t.type, t.category) + 1) + ')" aria-hidden="true">' + (t.type === 'transfer' ? (isSettlement(t) ? '💳' : '🔁') : catIcon(t.type, t.category)) + '</span>' +
     '<div class="tmain"><div class="tdesc">' + esc(t.desc) + badge + '</div><div class="tmeta">' + meta.filter(Boolean).join(' · ') + '</div>' +
     (S0.showNotes && t.notes ? '<div class="tnote">' + esc(t.notes) + '</div>' : '') + '</div>' +
     '<div class="tamt ' + c + '">' + amt + bal + '</div></div>';
 }
 function txnList(list, o) {
-  if (!list.length) return o && o.emptyHtml ? o.emptyHtml : '<div class="muted pad">No transactions.</div>';
-  return '<div class="tlist">' + list.map(function (t) { return txnRow(t, o); }).join('') + '</div>';
+  o = o || {};
+  if (!list.length) return o.emptyHtml ? o.emptyHtml : '<div class="muted pad">No transactions.</div>';
+  var byDate = /^date/.test(DB.settings.sort) && o.group !== false, out = '', cur = null;
+  var totals = {}; if (byDate) list.forEach(function (t) { (totals[t.date] = totals[t.date] || []).push(t); });
+  list.forEach(function (t) {
+    if (byDate && t.date !== cur) {
+      cur = t.date; var s = summarize(totals[cur]);
+      out += '<div class="dhead"><span class="dh1">' + esc(fmtDate(cur, true)) + '</span><span class="dh2">' + (s.income ? '<span class="pos">+' + fmtMoney(s.income) + '</span>' : '') + (s.expense ? '<span class="neg">−' + fmtMoney(s.expense) + '</span>' : '') + '</span></div>';
+    }
+    out += txnRow(t, o);
+  });
+  return '<div class="tlist">' + out + '</div>';
 }
 
 /* ---------- modal / confirm / toast ---------- */
@@ -863,9 +891,13 @@ function defaultAccountId() {
   var f = activeAccounts()[0]; return f ? f.id : '';
 }
 function catSelectFor(type, sel) {
-  var list = DB.categories[type === 'income' ? 'income' : 'expense'].slice(); if (sel && list.indexOf(sel) < 0) list.push(sel);
-  return list.map(function (c) { return opt(c, c, sel); }).join('');
+  var ty = type === 'income' ? 'income' : 'expense', list = DB.categories[ty].slice(); if (sel && list.indexOf(sel) < 0) list.push(sel);
+  return list.map(function (c) { return opt(c, catIcon(ty, c) + '  ' + c, sel); }).join('') + '<option value="__new__">＋ New category…</option>';
 }
+function iconPicker(sel) { return '<div class="icons" role="radiogroup" aria-label="Icon">' + ICON_CHOICES.map(function (e) { return '<button type="button" class="ic' + (e === sel ? ' on' : '') + '" data-act="pickIcon" data-i="' + e + '" aria-label="' + e + '">' + e + '</button>'; }).join('') + '</div>'; }
+function colorPicker(sel) { var o = ''; for (var i = 0; i < 8; i++) o += '<button type="button" class="cw' + (i === sel ? ' on' : '') + '" data-act="pickColor" data-c="' + i + '" style="background:var(--c' + (i + 1) + ')" aria-label="Colour ' + (i + 1) + '"></button>'; return '<div class="colors" role="radiogroup" aria-label="Colour">' + o + '</div>'; }
+ACT.pickIcon = function (el) { var box = el.closest('.icons'); $$('.ic', box).forEach(function (b) { b.classList.remove('on'); }); el.classList.add('on'); var w = el.closest('form'); if (w && w.elements.ncicon) w.elements.ncicon.value = el.getAttribute('data-i'); };
+ACT.pickColor = function (el) { var box = el.closest('.colors'); $$('.cw', box).forEach(function (b) { b.classList.remove('on'); }); el.classList.add('on'); var w = el.closest('form'); if (w && w.elements.nccolor) w.elements.nccolor.value = el.getAttribute('data-c'); };
 function openTxnForm(o) {
   o = o || {};
   if (!activeAccounts().length) {
@@ -883,7 +915,7 @@ function openTxnForm(o) {
     fld('Amount (' + DB.settings.currency.symbol + ')', 'amount', '<input name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="' + esc(v.amount) + '" required>') +
     '<div class="row2">' + fld('Account', 'account', '<select name="account">' + acctOptions(acc) + '</select>') +
     '<div class="only-t">' + fld('To account', 'toAccount', '<select name="toAccount">' + acctOptions(v.to, { blank: 'Choose…' }) + '</select>') + '</div></div>' +
-    '<div class="not-t">' + fld('Category', 'category', '<select name="category">' + catSelectFor(type, v.cat) + '</select>') + '</div>' +
+    '<div class="not-t">' + fld('Category', 'category', '<select name="category">' + catSelectFor(type, v.cat) + '</select>') + '<div class="newcat" hidden><label class="fld"><span>New category name</span><input name="ncname" maxlength="30" autocomplete="off" placeholder="e.g. Pets, Gym, Coffee"><div class="err" data-for="ncname"></div></label><input type="hidden" name="ncicon" value="🏷️"><input type="hidden" name="nccolor" value="0"><div class="muted sm">Pick an icon</div>' + iconPicker('🏷️') + '<div class="muted sm">Pick a colour</div>' + colorPicker(0) + '</div></div>' +
     fld('Description', 'desc', '<input name="desc" list="descs" maxlength="120" autocomplete="off" placeholder="What was this for?" value="' + esc(v.desc) + '"><datalist id="descs">' + descSuggestions() + '</datalist>') +
     '<div class="not-t">' + fld('Payment method', 'method', '<select name="method">' + (DB.methods.indexOf(v.method) < 0 && v.method ? opt(v.method, v.method, v.method) : '') + DB.methods.map(function (m) { return opt(m, m, v.method); }).join('') + '</select>') + '</div>' +
     ((DB.settings.askFee || fee) ? '<div class="only-t">' + fld('Transfer fee (optional)', 'fee', '<input name="fee" inputmode="decimal" autocomplete="off" placeholder="0.00" value="' + esc(v.fee) + '">', 'Recorded as a separate expense in “' + esc(DB.settings.feeCategory) + '”, charged to the source account.') + '</div>' : '') +
@@ -894,12 +926,19 @@ function openTxnForm(o) {
     '<button type="button" class="btn" data-act="closeModal">Cancel</button>' + (t ? '' : '<button type="submit" class="btn" data-more="1">Save & add another</button>') + '<button type="submit" class="btn primary">' + (t ? 'Save changes' : 'Save') + '</button></div></form>';
   var el = openModal(t ? 'Edit transaction' : 'Add transaction', body, { noFocus: false });
   var form = $('#txf', el); syncTypeUI(form);
-  form.addEventListener('change', function (e) { if (e.target.name === 'type') { form.setAttribute('data-type', e.target.value); var cs = form.elements.category, cur = cs.value; cs.innerHTML = catSelectFor(e.target.value, ''); if ([].some.call(cs.options, function (x) { return x.value === cur; })) cs.value = cur; syncTypeUI(form); } if (e.target.name === 'account' || e.target.name === 'toAccount') syncTypeUI(form); });
+  form.addEventListener('change', function (e) { if (e.target.name === 'type') { form.setAttribute('data-type', e.target.value); var cs = form.elements.category, cur = cs.value; cs.innerHTML = catSelectFor(e.target.value, ''); if ([].some.call(cs.options, function (x) { return x.value === cur; })) cs.value = cur; $('.newcat', form).hidden = cs.value !== '__new__'; syncTypeUI(form); } if (e.target.name === 'account' || e.target.name === 'toAccount') syncTypeUI(form); if (e.target.name === 'category') { var nc = $('.newcat', form); nc.hidden = e.target.value !== '__new__'; if (!nc.hidden) form.elements.ncname.focus(); } });
   var more = false; form.addEventListener('click', function (e) { more = !!e.target.getAttribute('data-more'); });
   form.addEventListener('submit', function (e) {
-    e.preventDefault(); var typ = form.elements.type.value;
-    var res = saveTxn({ type: typ, date: fv(form, 'date'), time: fv(form, 'time'), amount: fv(form, 'amount'), account: fv(form, 'account'), toAccount: fv(form, 'toAccount'), category: fv(form, 'category'), desc: fv(form, 'desc'), method: fv(form, 'method'), notes: fv(form, 'notes'), fee: fv(form, 'fee') }, t ? t.id : null);
+    e.preventDefault(); var typ = form.elements.type.value, catVal = fv(form, 'category'), newCat = null;
+    if (typ !== 'transfer' && catVal === '__new__') {
+      var nm = fv(form, 'ncname').trim(), tk = typ === 'income' ? 'income' : 'expense';
+      if (!nm) return showErrors(form, { ncname: 'Enter a name for the new category.' });
+      var ex = DB.categories[tk].filter(function (c) { return c.toLowerCase() === nm.toLowerCase(); })[0];
+      newCat = { type: tk, name: ex || nm, existed: !!ex, icon: fv(form, 'ncicon'), ci: +fv(form, 'nccolor') }; catVal = newCat.name;
+    }
+    var res = saveTxn({ type: typ, date: fv(form, 'date'), time: fv(form, 'time'), amount: fv(form, 'amount'), account: fv(form, 'account'), toAccount: fv(form, 'toAccount'), category: catVal, desc: fv(form, 'desc'), method: fv(form, 'method'), notes: fv(form, 'notes'), fee: fv(form, 'fee') }, t ? t.id : null);
     if (!res.ok) { showErrors(form, res.errors); return; }
+    if (newCat && !newCat.existed) { DB.categories[newCat.type].push(newCat.name); DB.catMeta[catKey(newCat.type, newCat.name)] = { icon: newCat.icon, ci: newCat.ci }; }
     S.date = res.txn.date; var added = !t;
     closeModal(true); commit(t ? 'Transaction updated.' : 'Transaction saved.');
     if (added && more) openTxnForm({ type: typ, account: res.txn.account, date: res.txn.date });
@@ -954,7 +993,7 @@ function tabDaily() {
   return firstRunBanner() + nav + '<div class="stats3">' + totalsStats(s) + '</div>' +
     (s.transfers ? '<p class="muted sm">Transfers today: ' + fmtMoney(s.transfers) + ' (not counted as income or expense).</p>' : '') +
     '<section class="card"><div class="chead"><h3>Transactions · ' + list.length + '</h3><button class="btn primary sm" data-act="addTxn" data-date="' + esc(d) + '">+ Add</button></div>' +
-    txnList(list, { emptyHtml: empty('Nothing recorded on this day', 'Add income, an expense or a transfer for ' + esc(fmtDate(d)) + '.', '<button class="btn primary" data-act="addTxn" data-date="' + esc(d) + '">+ Add transaction</button>') }) + '</section>';
+    txnList(list, { group: false, emptyHtml: empty('Nothing recorded on this day', 'Add income, an expense or a transfer for ' + esc(fmtDate(d)) + '.', '<button class="btn primary" data-act="addTxn" data-date="' + esc(d) + '">+ Add transaction</button>') }) + '</section>';
 }
 ACT.dshift = function (el) { S.date = addDays(S.date, +el.getAttribute('data-n')); render(); };
 ACT.dnow = function () { S.date = today(); render(); };
@@ -976,13 +1015,13 @@ function tabCalendar() {
   return firstRunBanner() + monthNav(key, 'cal') + '<div class="muted sm mline">' + esc(monthLabel(key)) + ': income <b class="pos">' + fmtMoney(ms.income) + '</b> · expenses <b class="neg">' + fmtMoney(ms.expense) + '</b> · net <b class="' + cls(ms.net) + '">' + fmtMoney(ms.net, null, true) + '</b></div>' +
     '<div class="cal" role="grid">' + heads + cells + '</div><div class="legend"><span><i class="sq pos"></i>Income</span><span><i class="sq neg"></i>Expenses</span><span><i class="sq xf"></i>Transfer only</span></div>' +
     '<section class="card"><div class="chead"><h3>' + esc(fmtDate(sel, true)) + '</h3><button class="btn primary sm" data-act="addTxn" data-date="' + esc(sel) + '">+ Add for this date</button></div><div class="stats3">' + totalsStats(ss) + '</div>' +
-    txnList(sl, { emptyHtml: '<div class="muted pad">Nothing recorded on this date. Pick a highlighted day, or add a transaction.</div>' }) + (inMonth ? '' : '<p class="muted sm">This date is outside the month shown.</p>') + '</section>';
+    txnList(sl, { group: false, emptyHtml: '<div class="muted pad">Nothing recorded on this date. Pick a highlighted day, or add a transaction.</div>' }) + (inMonth ? '' : '<p class="muted sm">This date is outside the month shown.</p>') + '</section>';
 }
 ACT.pickDay = function (el) { S.date = el.getAttribute('data-date'); render(); };
 
 function catBars(items, total, type) {
   if (!items.length) return '<div class="muted pad">No ' + (type === 'income' ? 'income' : 'expenses') + ' this month.</div>';
-  return '<ul class="bars">' + items.map(function (c) { var p = total ? c.value / total * 100 : 0; return '<li><div class="bl"><i class="sq c' + (c.ci + 1) + '"></i><span class="bn">' + esc(c.name) + '</span><span class="bv">' + fmtMoney(c.value) + '</span><span class="bp">' + p.toFixed(1) + '%</span></div><div class="bt"><div class="bf c' + (c.ci + 1) + '" style="width:' + Math.max(p, 1.5).toFixed(1) + '%"></div></div></li>'; }).join('') + '</ul>';
+  return '<ul class="bars">' + items.map(function (c) { var p = total ? c.value / total * 100 : 0; return '<li><div class="bl"><span class="cico sm" style="--cc:var(--c' + (c.ci + 1) + ')">' + c.icon + '</span><span class="bn">' + esc(c.name) + '</span><span class="bv">' + fmtMoney(c.value) + '</span><span class="bp">' + p.toFixed(1) + '%</span></div><div class="bt"><div class="bf c' + (c.ci + 1) + '" style="width:' + Math.max(p, 1.5).toFixed(1) + '%"></div></div></li>'; }).join('') + '</ul>';
 }
 function cmpRow(label, cur, prev, goodUp) {
   var d = cur - prev, pct = prev ? (d / Math.abs(prev) * 100) : null, good = d === 0 ? '' : ((d > 0) === goodUp ? 'pos' : 'neg');
@@ -1023,7 +1062,7 @@ function tabSummary() {
     '<h3 class="mt">Net worth <small class="muted">as of ' + esc(fmtDate(f.to || today())) + accNote + '</small></h3><div class="stats3">' + stat('Total assets', fmtMoney(nw.assets), 'pos') + stat('Total liabilities', fmtMoney(nw.liabilities), nw.liabilities ? 'neg' : '') + stat('Net worth', fmtMoney(nw.netWorth, null, true), cls(nw.netWorth), 'Assets − Liabilities') + '</div>' +
     '<p class="muted sm">Cash flow measures money moving in and out during the period. Net worth is what you own minus what you owe on the end date. They are different measures, so they need not match. Category and type filters apply to cash flow only; the account filter applies to both.</p>' +
     (miss.length ? '<div class="warn">No exchange rate set for ' + esc(miss.join(', ')) + '. Those balances are shown at 1:1 until you set a rate in Settings → Currency.</div>' : '') +
-    '<section class="card"><div class="chead"><h3>Matching transactions · ' + list.length + '</h3></div>' + txnList(sortTxns(list).slice(0, 100), { showDate: 1, emptyHtml: '<div class="muted pad">No transactions match these filters.</div>' }) + (list.length > 100 ? '<p class="muted sm">Showing the latest 100. Narrow the filters or export a CSV to see all.</p>' : '') + '</section>';
+    '<section class="card"><div class="chead"><h3>Matching transactions · ' + list.length + '</h3></div>' + txnList(sortTxns(list).slice(0, 100), { emptyHtml: '<div class="muted pad">No transactions match these filters.</div>' }) + (list.length > 100 ? '<p class="muted sm">Showing the latest 100. Narrow the filters or export a CSV to see all.</p>' : '') + '</section>';
 }
 
 /* ---------- Description ---------- */
@@ -1031,11 +1070,15 @@ function tabDescription() {
   var f = S.f.desc, list = filterTxns({ q: f.q, type: f.type, acct: f.acct, cat: f.cat }), groups = {};
   list.forEach(function (t) {
     var k = t.desc.trim().toLowerCase(), g = groups[k] || (groups[k] = { key: k, name: t.desc.trim(), income: 0, expense: 0, transfers: 0, n: 0, last: '', cats: {}, items: [] });
-    g.n++; g.items.push(t); if (t.date > g.last) { g.last = t.date; g.name = t.desc.trim(); }
+    g.n++; g.items.push(t); g.cnt = g.cnt || {}; if (t.type !== 'transfer') g.cnt[t.category + '|' + t.type] = (g.cnt[t.category + '|' + t.type] || 0) + 1; if (t.date > g.last) { g.last = t.date; g.name = t.desc.trim(); }
     if (t.type !== 'transfer') g.cats[t.category] = 1;
     if (t.type === 'income' && reportable(t)) g.income += amtMain(t); else if (t.type === 'expense' && reportable(t)) g.expense += amtMain(t); else if (t.type === 'transfer') g.transfers += amtMain(t);
   });
-  var arr = Object.keys(groups).map(function (k) { return groups[k]; });
+  var arr = Object.keys(groups).map(function (k) {
+    var g = groups[k], best = Object.keys(g.cnt || {}).sort(function (a, b) { return g.cnt[b] - g.cnt[a]; })[0];
+    if (best) { var pr = best.split('|'); g.icon = catIcon(pr[1], pr[0]); g.ci = catIndex(pr[1], pr[0]); } else { g.icon = '🔁'; g.ci = -1; }
+    return g;
+  });
   arr.sort({ 'total-desc': function (a, b) { return (b.income + b.expense) - (a.income + a.expense); }, 'expense-desc': function (a, b) { return b.expense - a.expense; }, 'income-desc': function (a, b) { return b.income - a.income; }, 'count-desc': function (a, b) { return b.n - a.n; }, 'recent': function (a, b) { return b.last.localeCompare(a.last); }, 'name': function (a, b) { return a.name.localeCompare(b.name); } }[f.sort]);
   var tot = summarize(list);
   var head = '<div class="filters"><label class="grow">Search<input type="search" data-f="desc.q" value="' + esc(f.q) + '" placeholder="Description, category, account, notes, amount…"></label>' +
@@ -1045,7 +1088,7 @@ function tabDescription() {
   var body = arr.length ? arr.map(function (g) {
     var open = S.open[g.key], cats = Object.keys(g.cats).slice(0, 3).join(', ');
     return '<section class="card grp"><button class="ghead" data-act="toggleGrp" data-k="' + esc(g.key) + '" aria-expanded="' + !!open + '"><span class="gname"><b>' + esc(g.name) + '</b><small>' + g.n + ' record' + (g.n > 1 ? 's' : '') + (cats ? ' · ' + esc(cats) : '') + ' · last ' + esc(fmtDate(g.last)) + '</small></span><span class="gtot">' + (g.income ? '<span class="pos">+' + fmtMoney(g.income) + '</span>' : '') + (g.expense ? '<span class="neg">−' + fmtMoney(g.expense) + '</span>' : '') + (!g.income && !g.expense ? '<span class="muted">' + fmtMoney(g.transfers) + ' moved</span>' : '') + '</span><span class="chev">' + (open ? '▾' : '▸') + '</span></button>' +
-      (open ? txnList(sortTxns(g.items).slice(0, 80), { showDate: 1 }) + (g.items.length > 80 ? '<p class="muted sm">Showing the latest 80.</p>' : '') + '<div class="gfoot"><span class="muted sm">Tap a row to edit it.</span><button class="btn sm" data-act="bulkDel" data-k="' + esc(g.key) + '">Delete all ' + g.n + '…</button></div>' : '') + '</section>';
+      (open ? txnList(sortTxns(g.items).slice(0, 80)) + (g.items.length > 80 ? '<p class="muted sm">Showing the latest 80.</p>' : '') + '<div class="gfoot"><span class="muted sm">Tap a row to edit it.</span><button class="btn sm" data-act="bulkDel" data-k="' + esc(g.key) + '">Delete all ' + g.n + '…</button></div>' : '') + '</section>';
   }).join('') : (DB.txns.length ? '<div class="muted pad">No records match your search.</div>' : empty('No history yet', 'Once you record transactions they are grouped here by description.', '<button class="btn primary" data-act="addTxn">+ Add transaction</button>'));
   return firstRunBanner() + head + '<p class="muted sm">' + arr.length + ' description' + (arr.length === 1 ? '' : 's') + ' · ' + list.length + ' records · income <b class="pos">' + fmtMoney(tot.income) + '</b> · expenses <b class="neg">' + fmtMoney(tot.expense) + '</b></p>' + body;
 }
@@ -1150,7 +1193,7 @@ function accountDetail(a) {
     '<div class="btns wrap"><button class="btn primary" data-act="addTxn" data-acct="' + a.id + '">+ Transaction</button><button class="btn" data-act="addTxn" data-type="transfer" data-acct="' + a.id + '">⇄ Transfer</button><button class="btn" data-act="editAcct" data-id="' + a.id + '">Edit</button>' +
     (a.status === 'archived' ? '<button class="btn" data-act="unarchive" data-id="' + a.id + '">Unarchive</button>' : '<button class="btn" data-act="archive" data-id="' + a.id + '">Archive</button>') + '<button class="btn danger" data-act="delAcct" data-id="' + a.id + '">Delete…</button></div></section>' +
     '<section class="card"><div class="chead"><h3>Transaction history · ' + list.length + '</h3></div><div class="filters"><label class="grow">Search<input type="search" data-f="acct.q" value="' + esc(f.q) + '" placeholder="Search this account"></label><label>Type<select data-f="acct.type">' + opt('', 'All types', f.type) + opt('income', 'Income', f.type) + opt('expense', 'Expense', f.type) + opt('transfer', 'Transfer', f.type) + '</select></label></div>' +
-    (list.length ? '<div class="tlist">' + list.slice(0, 200).map(function (t) { return txnRow(t, { showDate: 1, balance: rb[t.id] }); }).join('') + '</div>' + (list.length > 200 ? '<p class="muted sm">Showing the latest 200.</p>' : '') : '<div class="muted pad">No transactions for this account yet.</div>') + '</section>';
+    (list.length ? txnList(list.slice(0, 200), { rb: rb }) + (list.length > 200 ? '<p class="muted sm">Showing the latest 200.</p>' : '') : '<div class="muted pad">No transactions for this account yet.</div>') + '</section>';
 }
 ACT.backAcct = function () { S.acct = ''; location.hash = '#/accounts/list'; };
 ACT.archive = function (el) { var a = acctById(el.getAttribute('data-id')); setAccountStatus(a.id, 'archived'); commit('“' + a.name + '” archived. It stays in your totals but is hidden from new transactions.'); };
@@ -1260,7 +1303,7 @@ function secTxnSettings() {
   var s = DB.settings;
   function sel(k, opts) { return '<label class="fld"><span>' + opts[0] + '</span><select data-s="' + k + '">' + opts[1].map(function (o) { return opt(o[0], o[1], s[k]); }).join('') + '</select></label>'; }
   var catEd = ['expense', 'income'].map(function (ty) {
-    return '<div class="catbox"><h4>' + (ty === 'expense' ? 'Expense' : 'Income') + ' categories</h4><ul class="catlist">' + DB.categories[ty].map(function (c, i) { return '<li><i class="sq c' + (i % 8 + 1) + '"></i><span>' + esc(c) + '</span><button class="ib sm" data-act="renCat" data-t="' + ty + '" data-i="' + i + '" aria-label="Rename ' + esc(c) + '">✎</button><button class="ib sm" data-act="delCat" data-t="' + ty + '" data-i="' + i + '" aria-label="Delete ' + esc(c) + '">×</button></li>'; }).join('') + '</ul><button class="btn sm" data-act="addCat" data-t="' + ty + '">+ Add</button></div>';
+    return '<div class="catbox"><h4>' + (ty === 'expense' ? 'Expense' : 'Income') + ' categories</h4><ul class="catlist">' + DB.categories[ty].map(function (c, i) { return '<li><span class="cico sm" style="--cc:var(--c' + (catCi(ty, c) + 1) + ')">' + catIcon(ty, c) + '</span><span>' + esc(c) + '</span><button class="ib sm" data-act="editCat" data-t="' + ty + '" data-i="' + i + '" aria-label="Edit ' + esc(c) + '">✎</button><button class="ib sm" data-act="delCat" data-t="' + ty + '" data-i="' + i + '" aria-label="Delete ' + esc(c) + '">×</button></li>'; }).join('') + '</ul><button class="btn sm" data-act="addCat" data-t="' + ty + '">+ New category</button></div>';
   }).join('');
   return '<section class="card"><h3>Display & sorting</h3><div class="row2">' + sel('sort', ['Default sorting', [['date-desc', 'Newest first'], ['date-asc', 'Oldest first'], ['amount-desc', 'Largest amount'], ['amount-asc', 'Smallest amount']]]) +
     sel('defaultTab', ['Opening tab in Records', RTABS])+
@@ -1269,24 +1312,35 @@ function secTxnSettings() {
     '<label class="fld"><span>Default account</span><select data-s="defaultAccount">' + acctOptions(s.defaultAccount, { blank: 'First active account' }) + '</select></label>' +
     '<label class="fld"><span>Default payment method</span><select data-s="defaultMethod">' + DB.methods.map(function (m) { return opt(m, m, s.defaultMethod); }).join('') + '</select></label></div>' +
     toggle('showTime', s.showTime, 'Show time in transaction lists') + toggle('showNotes', s.showNotes, 'Show notes in transaction lists') + toggle('compact', s.compact, 'Compact rows', 'Fit more transactions on screen.') + '</section>' +
-    '<section class="card"><h3>Default categories</h3><div class="grid2">' + catEd + '</div><p class="muted sm">Renaming a category updates your existing transactions. Deleting one keeps old transactions as they are.</p></section>' +
+    '<section class="card"><h3>Default categories</h3><div class="grid2">' + catEd + '</div><p class="muted sm">Tap ✎ to change a category’s name, icon or colour. Renaming updates your existing transactions. Deleting one keeps old transactions as they are.</p></section>' +
     '<section class="card"><h3>Payment methods</h3><div class="chips">' + DB.methods.map(function (m, i) { return '<span class="chip">' + esc(m) + ' <button class="ib sm" data-act="delMethod" data-i="' + i + '" aria-label="Remove ' + esc(m) + '">×</button></span>'; }).join('') + '<button class="chip" data-act="addMethod">+ Add</button></div></section>';
 }
 function nameForm(title, val, cb) {
   var el = openModal(title, '<form id="nf" novalidate><label class="fld"><span>Name</span><input name="n" maxlength="40" value="' + esc(val || '') + '"><div class="err" data-for="n"></div></label><div class="btns"><button type="button" class="btn" data-act="closeModal">Cancel</button><button class="btn primary">Save</button></div></form>');
   $('#nf', el).addEventListener('submit', function (e) { e.preventDefault(); var n = fv(e.target, 'n').trim(); if (!n) return showErrors(e.target, { n: 'Enter a name.' }); var m = cb(n); if (m) return showErrors(e.target, { n: m }); closeModal(true); commit('Saved.'); });
 }
-ACT.addCat = function (el) { var ty = el.getAttribute('data-t'); nameForm('Add category', '', function (n) { var l = DB.categories[ty]; if (l.some(function (c) { return c.toLowerCase() === n.toLowerCase(); })) return 'Already exists.'; l.push(n); }); };
-ACT.renCat = function (el) {
-  var ty = el.getAttribute('data-t'), i = +el.getAttribute('data-i'), old = DB.categories[ty][i];
-  nameForm('Rename category', old, function (n) { var l = DB.categories[ty]; if (l.some(function (c, j) { return j !== i && c.toLowerCase() === n.toLowerCase(); })) return 'Already exists.'; l[i] = n; DB.txns.forEach(function (t) { if (t.type === ty && t.category === old) t.category = n; }); if (ty === 'expense' && DB.settings.feeCategory === old) DB.settings.feeCategory = n; });
-};
+ACT.addCat = function (el) { catForm(el.getAttribute('data-t'), -1); };
+ACT.editCat = function (el) { catForm(el.getAttribute('data-t'), +el.getAttribute('data-i')); };
+function catForm(ty, i) {
+  var old = i >= 0 ? DB.categories[ty][i] : '', icon = i >= 0 ? catIcon(ty, old) : '🏷️', ci = i >= 0 ? catCi(ty, old) : DB.categories[ty].length % 8;
+  var el = openModal(i >= 0 ? 'Edit category' : 'New ' + ty + ' category', '<form id="ccf" novalidate><label class="fld"><span>Name</span><input name="n" maxlength="30" value="' + esc(old) + '" autocomplete="off"><div class="err" data-for="n"></div></label><input type="hidden" name="ncicon" value="' + esc(icon) + '"><input type="hidden" name="nccolor" value="' + ci + '"><div class="muted sm">Icon</div>' + iconPicker(icon) + '<label class="fld"><span>Or type your own emoji</span><input name="own" maxlength="4" placeholder="🙂" autocomplete="off"></label><div class="muted sm">Colour</div>' + colorPicker(ci) + '<div class="btns"><button type="button" class="btn" data-act="closeModal">Cancel</button><button class="btn primary">Save</button></div></form>');
+  var f = $('#ccf', el);
+  f.elements.own.addEventListener('input', function () { var v = f.elements.own.value.trim(); if (v) { f.elements.ncicon.value = v; $$('.ic', f).forEach(function (b) { b.classList.remove('on'); }); } });
+  f.addEventListener('submit', function (e) {
+    e.preventDefault(); var n = fv(f, 'n').trim(), l = DB.categories[ty];
+    if (!n) return showErrors(f, { n: 'Enter a name.' });
+    if (l.some(function (c, j) { return j !== i && c.toLowerCase() === n.toLowerCase(); })) return showErrors(f, { n: 'That category already exists.' });
+    var meta = { icon: fv(f, 'ncicon') || '🏷️', ci: +fv(f, 'nccolor') };
+    if (i >= 0) { delete DB.catMeta[catKey(ty, old)]; l[i] = n; DB.txns.forEach(function (t) { if (t.type === ty && t.category === old) t.category = n; }); if (ty === 'expense' && DB.settings.feeCategory === old) DB.settings.feeCategory = n; } else l.push(n);
+    DB.catMeta[catKey(ty, n)] = meta; closeModal(true); commit('Category saved.');
+  });
+}
 ACT.delCat = function (el) {
   var ty = el.getAttribute('data-t'), i = +el.getAttribute('data-i'), c = DB.categories[ty][i];
   if (DB.categories[ty].length <= 1) return toast('Keep at least one category.', 'err');
   if (ty === 'expense' && c === DB.settings.feeCategory) return toast('This is your transfer-fee category. Choose another in Account settings first.', 'err');
   var n = DB.txns.filter(function (t) { return t.type === ty && t.category === c; }).length;
-  confirmBox('Delete category “' + c + '”?', n ? n + ' existing transactions keep this category name.' : 'No transactions use it.', 'Delete', function () { DB.categories[ty].splice(i, 1); commit('Category deleted.'); });
+  confirmBox('Delete category “' + c + '”?', n ? n + ' existing transactions keep this category name.' : 'No transactions use it.', 'Delete', function () { DB.categories[ty].splice(i, 1); delete DB.catMeta[catKey(ty, c)]; commit('Category deleted.'); });
 };
 ACT.addMethod = function () { nameForm('Add payment method', '', function (n) { if (DB.methods.some(function (m) { return m.toLowerCase() === n.toLowerCase(); })) return 'Already exists.'; DB.methods.push(n); }); };
 ACT.delMethod = function (el) { if (DB.methods.length <= 1) return toast('Keep at least one method.', 'err'); DB.methods.splice(+el.getAttribute('data-i'), 1); commit(); };
