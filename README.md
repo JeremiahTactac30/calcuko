@@ -4,14 +4,14 @@ A working finance app in three files: `index.html`, `style.css`, `script.js`. No
 
 ## Run it
 - Quick try: double-click `index.html`.
-- Online: upload the 3 files to a GitHub repo, then import the repo in Vercel (Framework: Other, no build command). Done.
+- Online: upload the 3 files (plus the `api` folder if you want sync) to a GitHub repo, then import the repo in Vercel (Framework: Other, no build command). Done.
 
 ## Where your data is stored (important)
 Data is saved in **your browser (localStorage)** on the device you use. There is no cloud account and no server, so:
 - Phone and laptop do NOT share data. Move it with Settings > Backup & Restore (download on one, restore on the other).
 - Clearing browser/site data deletes your records. Download a backup now and then.
 - Opening `index.html` as a file and opening the Vercel link are two separate storages.
-- Multi-device sync would need a backend (like the planner's Upstash setup). Not included here.
+- To sync across devices, follow SETUP-SYNC.md (free Upstash database + passcode on Vercel), then Settings > Sync.
 
 ## What's inside
 - Records: Daily, Calendar, Monthly, Summary (filters), Description (grouped, searchable).

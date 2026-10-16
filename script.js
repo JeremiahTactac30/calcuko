@@ -79,7 +79,7 @@ function newDB() {
   return { v: 1, settings: defaultSettings(), groups: DEFAULT_GROUPS.map(function (g) { return Object.assign({}, g); }), accounts: [], categories: { expense: DEFAULT_CATS.expense.slice(), income: DEFAULT_CATS.income.slice() }, methods: METHODS.slice(), txns: [], savedAt: null };
 }
 var DB = newDB();
-var storageOK = true, lastSaveError = '';
+var storageOK = true, lastSaveError = '', onSaved = null;
 
 /* ---------- money (integer centavos) ---------- */
 function parseMoney(input, allowZero, allowNeg) {
@@ -355,9 +355,11 @@ function validateDB(o) {
 function store() { try { return window.localStorage; } catch (e) { return null; } }
 function save() {
   DB.savedAt = Date.now();
-  var s = store(); if (!s) { storageOK = false; return false; }
-  try { s.setItem(KEY, JSON.stringify(DB)); storageOK = true; lastSaveError = ''; return true; }
-  catch (e) { storageOK = false; lastSaveError = String(e && e.message || e); return false; }
+  var s = store(), ok = false;
+  if (!s) storageOK = false;
+  else { try { s.setItem(KEY, JSON.stringify(DB)); storageOK = true; lastSaveError = ''; ok = true; } catch (e) { storageOK = false; lastSaveError = String(e && e.message || e); } }
+  if (onSaved) onSaved();
+  return ok;
 }
 function load() {
   var s = store(); if (!s) { storageOK = false; return { status: 'nostorage' }; }
@@ -681,17 +683,18 @@ function render() {
   var scroll = window.scrollY;
   main.innerHTML = ({ records: pageRecords, stats: pageStats, accounts: pageAccounts, settings: pageSettings })[S.page]();
   $$('.nav a').forEach(function (a) { var on = a.getAttribute('data-page') === S.page; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-  var banner = $('#banner'); banner.innerHTML = !storageOK ? '<div class="warn">⚠ This browser is not saving your data (' + esc(lastSaveError || 'storage unavailable or blocked') + '). Your records will be lost when you close the tab. Use Settings → Backup & Restore → Download backup.</div>' : '';
+  var banner = $('#banner'); var sp = typeof SYNC !== 'undefined' && SYNC.on && ['offline', 'error', 'unavailable', 'auth', 'conflict'].indexOf(SYNC.state) >= 0 ? '<div class="warn">⚠ ' + esc(SYNC.msg || 'Sync problem') + ' <a href="#/settings/sync">Sync settings</a></div>' : '';
+  banner.innerHTML = sp + (!storageOK ? '<div class="warn">⚠ This browser is not saving your data (' + esc(lastSaveError || 'storage unavailable or blocked') + '). Your records will be lost when you close the tab. Use Settings → Backup & Restore → Download backup.</div>' : '');
   if (S.page === 'stats') drawCharts();
   if (S.page === 'settings') afterSettingsRender();
   if (keep) { var el = $('[data-f="' + keep + '"]'); if (el) { el.focus(); try { if (pos != null) el.setSelectionRange(pos, pos); } catch (e) { /* ignore */ } } }
   window.scrollTo(0, scroll);
-  document.title = 'Finance Tracker';
+  document.title = 'Finance Tracker'; if (typeof syncUi === 'function') syncUi();
 }
 function shell() {
   var nav = PAGES.map(function (p) { return '<a href="#/' + p[0] + '" data-page="' + p[0] + '">' + ico(p[2]) + '<span>' + p[1] + '</span></a>'; }).join('');
   return '<div class="app"><aside class="rail"><div class="brand"><span class="logo">₱</span><b>Finance Tracker</b></div><nav class="nav" aria-label="Main">' + nav + '</nav>' +
-    '<div class="railfoot"><button class="btn primary block" data-act="addTxn">+ Add transaction</button></div></aside>' +
+    '<div class="railfoot"><button class="syncstat off" id="syncStat" data-act="goSync">○ Sync off</button><button class="btn primary block" data-act="addTxn">+ Add transaction</button></div></aside>' +
     '<main class="content"><div id="banner"></div><div id="view"></div></main>' +
     '<nav class="nav bottom" aria-label="Main">' + nav + '</nav><button class="fab" data-act="addTxn" aria-label="Add transaction">+</button></div><div id="toasts" aria-live="polite"></div><div id="tip" class="tip" hidden></div>';
 }
@@ -1238,10 +1241,10 @@ ACT.delGroup = function (el) {
   confirmBox('Delete group “' + g.name + '”?', 'The group is empty, so no accounts are affected.', 'Delete group', function () { DB.groups = DB.groups.filter(function (x) { return x.id !== g.id; }); commit('Group deleted.'); });
 };
 /* ================= Page 4: Settings & Tools ================= */
-var SSECT = [['calculator', 'Calculator'], ['transactions', 'Transaction settings'], ['theme', 'Theme'], ['help', 'Help'], ['accounts', 'Accounts'], ['currency', 'Currency'], ['backup', 'Backup & Restore']];
+var SSECT = [['calculator', 'Calculator'], ['transactions', 'Transaction settings'], ['theme', 'Theme'], ['help', 'Help'], ['accounts', 'Accounts'], ['currency', 'Currency'], ['backup', 'Backup & Restore'], ['sync', 'Sync']];
 function pageSettings() {
   var nav = '<div class="chips scroll">' + SSECT.map(function (s) { return '<a class="chip' + (S.settings === s[0] ? ' on' : '') + '" href="#/settings/' + s[0] + '">' + s[1] + '</a>'; }).join('') + '</div>';
-  var fn = { calculator: secCalc, transactions: secTxnSettings, theme: secTheme, help: secHelp, accounts: accountSettingsPanel, currency: secCurrency, backup: secBackup }[S.settings] || secCalc;
+  var fn = { calculator: secCalc, transactions: secTxnSettings, theme: secTheme, help: secHelp, accounts: accountSettingsPanel, currency: secCurrency, backup: secBackup, sync: secSync }[S.settings] || secCalc;
   return '<header class="ph"><h1>Settings & Tools</h1></header>' + nav + fn();
 }
 function afterSettingsRender() { if (S.settings === 'currency') { var cf = $('#curf'); if (cf) curPreview(cf); } if (S.settings === 'calculator') calcRefresh(); if (S.settings === 'backup') backupRefresh(); }
@@ -1465,7 +1468,7 @@ ACT.impGo = function () {
   }, { safe: true });
 };
 ACT.eraseAll = function () {
-  confirmBox('Erase ALL data?', 'This deletes every account, transaction, category and setting stored in this browser. Download a backup first if you might need it.', 'Erase everything', function () {
+  confirmBox('Erase ALL data?', 'This deletes every account, transaction, category and setting stored in this browser' + (SYNC.on ? ' <b>and, because sync is on, the cloud copy and your other devices</b>' : '') + '. Download a backup first if you might need it.', 'Erase everything', function () {
     snapshotNow(); DB = newDB(); S.imp = null; commit('All data erased. “Undo last restore” can bring it back until you restore or erase again.');
   }, { typed: 'DELETE' });
 };
@@ -1516,6 +1519,124 @@ ACT.removeSample = function () {
     DB.txns = DB.txns.filter(function (t) { return !t.sample; }); commit('Sample data removed.');
   });
 };
+/* ================= Cloud sync (optional; needs the api/finance.js function) ================= */
+var SYNC_KEY = 'finance-tracker:sync';
+var SYNC = { on: false, pass: '', rev: 0, dirty: false, last: 0, state: 'off', msg: '', busy: false, ver: 0, applying: false, timer: null, conflictOpen: false };
+function syncLoad() {
+  try { var j = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); if (j && j.pass) { SYNC.on = true; SYNC.pass = j.pass; SYNC.rev = j.rev || 0; SYNC.dirty = !!j.dirty; SYNC.last = j.last || 0; SYNC.state = 'idle'; } } catch (e) { /* ignore */ }
+}
+function syncPersist() { try { if (SYNC.on) localStorage.setItem(SYNC_KEY, JSON.stringify({ pass: SYNC.pass, rev: SYNC.rev, dirty: SYNC.dirty, last: SYNC.last })); else localStorage.removeItem(SYNC_KEY); } catch (e) { /* ignore */ } }
+function syncCall(method, o) {
+  o = o || {};
+  var headers = { 'x-passcode': o.pass != null ? o.pass : SYNC.pass, 'x-base-rev': String(o.base != null ? o.base : SYNC.rev) };
+  if (o.body != null) headers['content-type'] = 'text/plain';
+  return fetch('api/finance' + (o.meta ? '?meta=1' : ''), { method: method, headers: headers, body: o.body, cache: 'no-store' }).then(function (r) {
+    return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { /* not JSON */ } return { status: r.status, j: j }; });
+  });
+}
+function syncFail(res, err) { // returns a state + message for a failed call
+  if (err) return { state: 'offline', msg: 'Can’t reach the sync server. Your changes stay on this device and will sync when you are back online.' };
+  if (!res.j) return { state: 'unavailable', msg: 'Sync isn’t set up on this site (the api/finance.js function wasn’t found). See the README.' };
+  if (res.status === 401) return { state: 'auth', msg: 'The sync passcode was not accepted.' };
+  if (res.status === 500 && res.j.error === 'not_configured') return { state: 'unavailable', msg: 'The server isn’t configured yet. Add FINANCE_PASSCODE and connect an Upstash Redis database in Vercel, then redeploy.' };
+  if (res.status === 413) return { state: 'error', msg: 'Your data is too large to sync (limit about 4 MB).' };
+  return { state: 'error', msg: 'The sync server returned an error (' + res.status + '). Will retry.' };
+}
+function syncSet(state, msg) { SYNC.state = state; SYNC.msg = msg || ''; syncUi(); }
+function syncUi() {
+  var el = $('#syncStat'); if (el) {
+    var t = { off: 'Sync off', idle: 'Sync on', saving: 'Saving…', synced: 'Synced ' + (SYNC.last ? new Date(SYNC.last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''), offline: 'Offline · will sync later', unavailable: 'Sync unavailable', auth: 'Sync passcode rejected', error: 'Sync problem', conflict: 'Sync conflict' }[SYNC.state] || '';
+    el.className = 'syncstat ' + SYNC.state; el.textContent = (SYNC.state === 'synced' || SYNC.state === 'idle' ? '● ' : SYNC.state === 'off' ? '○ ' : '⚠ ') + t; el.title = SYNC.msg || t; el.setAttribute('data-act', 'goSync');
+    if (SYNC.state === 'saving') el.textContent = '↻ Saving…';
+  }
+  var b = $('#syncBox'); if (b && S.page === 'settings' && S.settings === 'sync' && !$('#syncPass:focus')) b.innerHTML = syncBoxHtml();
+}
+ACT.goSync = function () { go('settings/sync'); };
+function syncApply(dataStr, rev) {
+  var v; try { v = validateDB(JSON.parse(dataStr)); } catch (e) { v = { ok: false, errors: ['Cloud data could not be read.'] }; }
+  if (!v.ok) { syncSet('error', 'The cloud copy is invalid: ' + v.errors.join(' ')); return false; }
+  if (DB.txns.length || DB.accounts.length) snapshotNow();
+  SYNC.applying = true; DB = v.db; save(); SYNC.applying = false;
+  SYNC.rev = rev; SYNC.dirty = false; SYNC.last = Date.now(); syncPersist(); syncSet('synced'); render(); return true;
+}
+function syncMarkDirty() { if (!SYNC.on || SYNC.applying) return; SYNC.dirty = true; SYNC.ver++; syncPersist(); clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncPush, 1500); syncSet('saving'); }
+function syncPush() {
+  if (!SYNC.on || SYNC.busy) { if (SYNC.on) { clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncPush, 1500); } return; }
+  if (SYNC.state === 'conflict' || SYNC.state === 'auth' || SYNC.state === 'unavailable') return;
+  SYNC.busy = true; var ver = SYNC.ver;
+  syncCall('PUT', { body: JSON.stringify(DB) }).then(function (res) {
+    SYNC.busy = false;
+    if (res.status === 200 && res.j && res.j.rev) { SYNC.rev = res.j.rev; SYNC.last = Date.now(); if (ver === SYNC.ver) SYNC.dirty = false; syncPersist(); syncSet('synced'); if (SYNC.dirty) syncMarkDirty(); }
+    else if (res.status === 409 && res.j) syncConflict(res.j.rev);
+    else { var f = syncFail(res); syncSet(f.state, f.msg); if (f.state === 'error') { clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncPush, 30000); } }
+  }).catch(function (e) { SYNC.busy = false; var f = syncFail(null, e); syncSet(f.state, f.msg); clearTimeout(SYNC.timer); SYNC.timer = setTimeout(syncPush, 30000); });
+}
+function syncPoll() {
+  if (!SYNC.on || SYNC.busy || SYNC.conflictOpen || ['auth', 'unavailable'].indexOf(SYNC.state) >= 0 || modalStack.length) return;
+  if (SYNC.dirty) return syncPush();
+  SYNC.busy = true;
+  syncCall('GET', { meta: true }).then(function (res) {
+    SYNC.busy = false;
+    if (res.status !== 200 || !res.j) { var f = syncFail(res); return syncSet(f.state, f.msg); }
+    if (res.j.rev !== SYNC.rev && res.j.rev > 0) syncPull(); else { SYNC.last = Date.now(); syncPersist(); syncSet('synced'); }
+  }).catch(function (e) { SYNC.busy = false; var f = syncFail(null, e); syncSet(f.state, f.msg); });
+}
+function syncPull() {
+  SYNC.busy = true;
+  syncCall('GET').then(function (res) {
+    SYNC.busy = false;
+    if (res.status !== 200 || !res.j) { var f = syncFail(res); return syncSet(f.state, f.msg); }
+    if (res.j.data == null) return syncPush();
+    if (SYNC.dirty) return syncConflict(res.j.rev);
+    if (syncApply(res.j.data, res.j.rev)) toast('Updated with changes from another device.');
+  }).catch(function (e) { SYNC.busy = false; var f = syncFail(null, e); syncSet(f.state, f.msg); });
+}
+function syncConflict(cloudRev) {
+  if (SYNC.conflictOpen) return; SYNC.conflictOpen = true; syncSet('conflict', 'Another device saved changes while this device had unsynced changes.');
+  var el = openModal('Sync conflict', '<p>Another device saved changes to the cloud copy, and this device also has changes that haven’t been uploaded. Choose which version to keep. Nothing is merged automatically.</p><div class="btns wrap"><button class="btn" data-act="syncDownloadLocal">Download this device’s data first</button></div><div class="btns"><button class="btn" data-act="syncUseCloud">Use cloud version</button><button class="btn primary" data-act="syncKeepMine">Keep this device’s version</button></div><p class="muted sm">“Use cloud” replaces this device’s data (a safety copy is kept for “Undo last restore”). “Keep this device” overwrites the cloud copy.</p>', { sticky: true });
+  SYNC.pendingCloudRev = cloudRev;
+}
+function syncCloseConflict() { SYNC.conflictOpen = false; closeModal(true); }
+ACT.syncDownloadLocal = function () { ACT.expBackup(); };
+ACT.syncUseCloud = function () { syncCloseConflict(); SYNC.dirty = false; syncPull(); };
+ACT.syncKeepMine = function () { SYNC.rev = SYNC.pendingCloudRev || SYNC.rev; syncCloseConflict(); if (SYNC.state === 'conflict') SYNC.state = 'idle'; SYNC.dirty = true; syncPersist(); syncPush(); };
+ACT.syncNow = function () { if (!SYNC.on) return; if (['auth', 'unavailable', 'error', 'offline', 'conflict'].indexOf(SYNC.state) >= 0) SYNC.state = 'idle'; SYNC.busy = false; if (SYNC.dirty) syncPush(); else syncPoll(); toast('Checking…'); };
+ACT.syncOff = function () {
+  confirmBox('Turn off sync on this device?', 'Your data stays on this device and in the cloud. This device just stops syncing and forgets the passcode.', 'Turn off sync', function () { SYNC.on = false; SYNC.pass = ''; SYNC.dirty = false; syncPersist(); syncSet('off'); render(); toast('Sync turned off on this device.'); }, { safe: true });
+};
+ACT.syncOn = function () {
+  var pass = ($('#syncPass') || {}).value || ''; if (!pass.trim()) return toast('Enter your sync passcode.', 'err');
+  var msg = $('#syncMsg'); if (msg) msg.textContent = 'Connecting…';
+  syncCall('GET', { pass: pass, base: 0 }).then(function (res) {
+    if (res.status !== 200 || !res.j) { var f = syncFail(res); if (msg) msg.textContent = f.msg; return; }
+    function enable() { SYNC.on = true; SYNC.pass = pass; SYNC.state = 'idle'; syncPersist(); }
+    var localEmpty = !DB.accounts.length && !DB.txns.length;
+    if (res.j.data == null) { // cloud empty: upload this device's data
+      enable(); SYNC.rev = 0; SYNC.dirty = true; syncPersist(); syncPush(); toast('Sync on. Uploading your data…'); render(); return;
+    }
+    if (localEmpty) { enable(); if (syncApply(res.j.data, res.j.rev)) toast('Sync on. Your cloud data was loaded.'); return; }
+    var el = openModal('Which data do you want to keep?', '<p>The cloud already has data, and this device has data too. They are not merged.</p><div class="btns"><button class="btn" data-act="syncChooseCloud">Use cloud data<br><small>replaces this device</small></button><button class="btn primary" data-act="syncChooseMine">Use this device’s data<br><small>replaces the cloud copy</small></button></div>', { sticky: true });
+    SYNC.pending = { pass: pass, rev: res.j.rev, data: res.j.data }; SYNC.enable = enable;
+  }).catch(function (e) { var f = syncFail(null, e); if (msg) msg.textContent = f.msg; });
+};
+ACT.syncChooseCloud = function () { var p = SYNC.pending; closeModal(true); SYNC.enable(); if (syncApply(p.data, p.rev)) toast('Sync on. Cloud data loaded.'); };
+ACT.syncChooseMine = function () { var p = SYNC.pending; closeModal(true); SYNC.enable(); SYNC.rev = p.rev; SYNC.dirty = true; syncPersist(); syncPush(); toast('Sync on. Uploading this device’s data…'); render(); };
+function syncBoxHtml() {
+  var labels = { idle: 'On', synced: 'Synced', saving: 'Saving…', offline: 'Offline', unavailable: 'Not available', auth: 'Passcode rejected', error: 'Problem', conflict: 'Conflict' };
+  if (SYNC.on) return '<p><b>' + (labels[SYNC.state] || 'On') + '</b>' + (SYNC.last ? ' · last checked ' + esc(new Date(SYNC.last).toLocaleString()) : '') + (SYNC.dirty ? ' · changes waiting to upload' : '') + '</p>' + (SYNC.msg ? '<div class="warn">' + esc(SYNC.msg) + '</div>' : '') + '<div class="btns wrap"><button class="btn primary" data-act="syncNow">Sync now</button><button class="btn" data-act="syncOff">Turn off on this device</button></div>';
+  return '<label class="fld"><span>Sync passcode</span><input id="syncPass" type="password" autocomplete="off" placeholder="The passcode you set in Vercel"></label><div class="btns wrap"><button class="btn primary" data-act="syncOn">Turn on sync</button></div><p class="muted sm" id="syncMsg"></p>';
+}
+function secSync() {
+  return '<section class="card"><h3>Sync across devices</h3><p class="muted sm">Open this site on any phone or computer, enter the same passcode, and your accounts and transactions follow you. Changes upload within a couple of seconds and other devices check every 20 seconds.</p><div id="syncBox">' + syncBoxHtml() + '</div></section>' +
+    '<section class="card"><h3>How it works</h3><ul class="guide"><li>Your data is kept in a private database on your own Vercel account. Only someone with the passcode can read or change it.</li><li>The whole data file is saved each time. If two devices change things at the same moment, you’ll be asked which version to keep. Nothing is merged silently.</li><li>Each device still keeps its own copy, so the app works offline and uploads later.</li><li>Keep downloading backups now and then. Sync is not a backup: deleting something on one device deletes it everywhere.</li><li>Needs the one-time server setup in the README (a free Upstash Redis database and a passcode). Without it this page will say sync is unavailable.</li></ul></section>';
+}
+function syncStart() {
+  syncLoad(); onSaved = syncMarkDirty;
+  setInterval(syncPoll, 20000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) syncPoll(); });
+  window.addEventListener('online', function () { if (SYNC.on && SYNC.state === 'offline') SYNC.state = 'idle'; syncPoll(); });
+  if (SYNC.on) { syncUi(); setTimeout(function () { if (SYNC.dirty) syncPush(); else syncPoll(); }, 400); }
+}
 /* ================= Boot ================= */
 var booted = false;
 function boot() {
@@ -1524,7 +1645,7 @@ function boot() {
   document.getElementById('root').innerHTML = shell();
   wireEvents(); wireChartTips(); wireCurrencyForm(); wireCalc(); wireBackup();
   if (!location.hash) { S.tab = DB.settings.defaultTab || 'daily'; }
-  readHash(); render();
+  syncStart(); readHash(); render();
   if (res.status === 'corrupt') openModal('Saved data could not be read', '<p>' + esc((res.errors || []).join(' ')) + '</p><p>A copy of the unreadable data was kept in this browser. The app has started empty so you can continue; you can restore a backup file in Settings → Backup & Restore.</p><div class="btns"><button class="btn primary" data-act="closeModal">OK</button></div>', { sticky: true });
   if (res.status === 'nostorage') toast('Browser storage is blocked. Data will not be kept after you close this tab.', 'err');
 }
